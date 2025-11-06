@@ -1,3 +1,11 @@
+# RStudio
 .Rproj.user
 .Rhistory
+.RData
+.Ruserdata
 *.Rproj
+
+# renv
+renv/library/
+renv/staging/
+renv/python/
