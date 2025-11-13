@@ -1,0 +1,337 @@
+## Explorační analýza
+
+-   Načtení dat
+-   Standardizace dat (správné datové typy, tabulka jako `data.frame`, stack dat, odstranění NA)
+-   Odstranění odlehlých pozorování (krabicový graf -\> původní hodnoty ponechat)
+-   Analýza kvalitativních hodnot (absolutní a relativní četnost, sloupcový graf)
+-   Analýza kvantitativních hodnot (seskupení podle kvalitativních hodnot, číselné charakteristiky [sum, var, sd...],\
+    krabickové grafy, Q-Q grafy)
+-   Posouzení modelování dat normálním rozdělením
+
+*načtení knihoven, nastavení zaokrouhlení*
+
+```{r}
+library(readxl)
+library(moments)
+library(dplyr)
+library(rstatix)
+
+options(OutDec = ".",
+        digits = 7,
+        pillar.sigfig = NULL)
+```
+
+### Načtení datového souboru
+
+```{r}
+#* typ zdrojových dat
+#* csv [csv]
+#* excel s jedním sheetem [excel]
+#* excel s mnoha sheety [mexcel]
+DATA_SOURCE_TYPE = "excel"
+
+#* název datového souboru
+DATA_FILE_NAME = "FPS_data"
+#* jaký znak odděluje data v tabulce
+SEPARATOR = ";"
+#* přeskočení řádků na začátku tabulky
+SKIP_ROWS = 0
+#* jestli je první řádek tabulky název sloupce
+FIRST_ROW_IS_HEADER = TRUE
+#* stránky v excel tabulce ze kterých číst
+EXCEL_SHEET_NAME = c("Vysledky mereni")
+
+rm(data)
+
+if (DATA_SOURCE_TYPE == "csv") {
+  # DATA JSOU V JEDNOM CSV SOUBORU NA JEDNOM SHEETU
+  data = read.csv2(file=paste("./data/", DATA_FILE_NAME, ".csv", sep=""), sep=SEPARATOR, skip=SKIP_ROWS, header=FIRST_ROW_IS_HEADER)
+  data = as.data.frame(data)
+}
+if (DATA_SOURCE_TYPE == "excel") {
+  # DATA JSOU V JEDNOM EXCEL SOUBORU NA JEDNOM SHEETU
+  data = read_excel(paste("./data/", DATA_FILE_NAME, ".xlsx", sep=""), sheet=EXCEL_SHEET_NAME[1], skip=SKIP_ROWS)
+  data = as.data.frame(data)
+}
+if (DATA_SOURCE_TYPE == "mexcel") {
+  # DATA JSOU V JEDNOM EXCEL SOUBORU V JEDNOTLIVÝCH SHEETECH
+  #* ruční načtení dat z jednotlivých sheetu
+  data_A = readxl::read_excel(paste("./data/", DATA_FILE_NAME, ".xlsx", sep=""), sheet=EXCEL_SHEET_NAME[1], skip=SKIP_ROWS)
+  data_B = readxl::read_excel(paste("./data/", DATA_FILE_NAME, ".xlsx", sep=""), sheet=EXCEL_SHEET_NAME[2], skip=SKIP_ROWS)
+  data_C = readxl::read_excel(paste("./data/", DATA_FILE_NAME, ".xlsx", sep=""), sheet=EXCEL_SHEET_NAME[3], skip=SKIP_ROWS)
+  data_D = readxl::read_excel(paste("./data/", DATA_FILE_NAME, ".xlsx", sep=""), sheet=EXCEL_SHEET_NAME[4], skip=SKIP_ROWS)
+  #...atd...
+  #...atd...
+  
+  data_A$typ = EXCEL_SHEET_NAME[1]
+  data_B$typ = EXCEL_SHEET_NAME[2]
+  data_C$typ = EXCEL_SHEET_NAME[3]
+  data_D$typ = EXCEL_SHEET_NAME[4]
+  #...atd...
+  #...atd...
+  
+  data = rbind(data_A, data_B, data_C, data_D)
+  data = as.data.frame(data)
+  rm(data_A, data_B, data_C, data_D)
+}
+```
+
+### Odstranění sloupců/řádků, změna názvu sloupců,
+
+```{r}
+#* odstranění řádků nebo sloupců
+data = data[,-c(1, 2, 3, 8, 9)]
+
+#* vytvoření nové tebulky ve smyslu vynechání řádků za nějaké podmínky
+#data = data %>% filter(chem == "neprosel")
+
+#* úprava názvů sloupců
+colnames(data) = c("3070release", "3070patched", "6800release", "6800patched")
+```
+
+### Standardizace
+
+```{r}
+#* potřeba standardizace
+FORMAT_NEEDED = TRUE
+
+##* stack lze použít
+##* poté je potřeba přejmenovat sloupce 
+if (FORMAT_NEEDED) {
+  data = reshape(data=data, 
+                 direction="long",
+                 # ktere sloupce beru z puvodni struktury, každá položka listu = 1 kategorie
+                 varying=list(c("3070release", "6800release"),
+                              c("3070patched", "6800patched")),
+                 # jak se maji jmenovat nove sloupce s kvantitativnimi hodnotami
+                 v.names=c("release", "patched"),
+                 # jak se má jmenovat sloupec s kvalitativními hodnotami
+                 timevar="typ",
+                 # jak mají být kvalitativní hodnoty reprezentované
+                 times=c("3070", "6800"))
+}
+
+#* odstranění vzniklého "id" sloupce
+data$id = NULL
+
+#* odstranění NA hodnot
+data = na.omit(data)
+
+#* změna sloupce kvalitativního znaku na faktor
+data$typ = as.factor(data$typ)
+
+#* změna sloupců kvantitativního znaku na numeric
+data$release = as.numeric(data$release)
+data$patched = as.numeric(data$patched)
+
+#* generace vypocítaných sloupců
+data = data %>% mutate(narust = patched - release)
+```
+
+### Odstranění odlehlých pozorování
+
+```{r}
+#* odstranění vzniklého "id" sloupce a generace nového
+data$id = NULL
+data$id = seq_along(data$typ)
+
+#* výpis hodnot z boxplotu
+#* v $out jsou uložena odlehlá pozorování detekována metodou vnitřních hradeb
+#* v $group je info, ze které skupiny odlehlá pozorování jsou
+boxplot(data$narust~data$typ, plot=FALSE)
+boxplot(data$narust~data$typ)
+
+#* funkce vyfiltruje z původního datového souboru odlehlá pozorování
+outliners = data %>% group_by(typ) %>% identify_outliers(narust)
+data$narust = ifelse(data$id %in% outliners$id, NA, data$narust)
+rm(outliners)
+
+#* odstranění NA hodnot po procesu odstranění odlehlých pozorování
+data = na.omit(data)
+```
+
+### Analýza kvalitativních hodnot
+
+```{r}
+cetnosti = table(data$typ)
+cetnosti
+barplot(cetnosti)
+```
+
+### Analýza kvantitativních hodnot
+
+```{r}
+ciselne_charakteristiky = 
+  data %>%
+  group_by(typ) %>% 
+  summarise(rozsah = length(na.omit(narust)),
+            minimum = min(narust, na.rm=T),
+            Q1 = quantile(narust, 0.25, na.rm=T),
+            prumer = mean(narust, na.rm=T),
+            median = median(narust, na.rm=T),
+            Q3 = quantile(narust, 0.75, na.rm=T),
+            maximum = max(narust, na.rm=T),
+            rozptyl = var(narust, na.rm=T),
+            smerodatna_odchylka = sd(narust, na.rm=T),
+            variacni_koeficient = (100 * (smerodatna_odchylka / prumer)),
+            sikmost = (moments::skewness(narust, na.rm=T)),
+            spicatost = (moments::kurtosis(narust, na.rm=T) - 3))
+
+t(ciselne_charakteristiky)
+boxplot(data$narust~data$typ)
+hist(data$narust, breaks=30)
+```
+
+### Reprezentace kvantitativních hodnot do grafů a jejich export
+
+```{r}
+#* boxplot pro reporty
+#png("plots/boxplot_narust_op.png", width=800, height=600, res=120)
+col_1 = rgb(102/255, 179/255, 255/255, alpha=0.5)
+col_2 = rgb(153/255, 255/255, 153/255, alpha=0.5)
+boxplot(data$narust~data$typ,
+  col=c(col_1, col_2),
+  names=c("RTX 3070 Ti", "RX 6800 XT"),
+  horizontal=TRUE, 
+  main="Rozložení nárůstů FPS podle typu GPU",
+  ylab="Typ GPU",
+  xlab="Nárůst FPS",
+  border="gray30",
+  boxwex=0.6            
+)
+grid(nx=NA, ny=NULL)
+#dev.off()
+
+#* histogram pro reporty
+#png("plots/histogram_narust_abs.png", width=800, height=600, res=120)
+hist(data$narust[data$typ=="3070"],
+  breaks=20,
+  col=col_1,
+  border="black",
+  main="Absolutní četnost nárůstů FPS podle typu GPU",
+  xlab="Nárůst FPS",
+  ylab="Četnost",
+  xlim=range(data$narust),
+  freq=TRUE
+)
+hist(data$narust[data$typ=="6800"],
+  breaks=20,
+  col=col_2,
+  border="black",
+  add=TRUE
+)
+legend("topright", legend=c("RTX 3070 Ti", "RX 6800 XT"), fill=c(col_1, col_2))
+grid(nx=NA, ny=NULL)
+#dev.off()
+
+#* hustota pravděpodobnosti
+#png("plots/histogram_narust_rel_6800.png", width=800, height=600, res=120)
+hist(narust_6800,
+  breaks=20,
+  col=col_2,
+  border="black",
+  main="Relativní četnost nárůstů FPS pro RX 6800 XT",
+  xlab="Nárůst FPS",
+  ylab="Hustota pravděpodobnosti",
+  freq=FALSE
+)
+lines(density(narust_6800), col="#E63946", lwd=2)
+xfit = seq(min(narust_6800), max(narust_6800), length=500)
+yfit = dnorm(xfit, mean=mean(narust_6800), sd=sd(narust_6800))
+lines(xfit, yfit, col="#1D3557", lwd=2)
+legend("topright", 
+  legend=c("Empirická hustota", "Teoretická norma"),
+  fill=c("#E63946", "#1D3557")
+)
+grid(nx=NA, ny=NULL)
+#dev.off()
+
+#* QQ-Grafy
+png("plots/qq_norm_3070.png", width=800, height=600, res=120)
+qqnorm(narust_3070,
+  pch=21,
+  col="black",
+  bg=col_1,
+  cex=1.3,
+  main="QQ-graf nárůstů FPS pro RTX 3070 Ti",
+  xlab="Teoretické kvantily",
+  ylab="Empirické kvantily"
+)
+qqline(narust_3070, col="#1D3557", lwd=1)
+grid(nx=NA, ny=NULL)
+dev.off()
+```
+
+### Tvorba dodatečných sloupců z informací k dispozici & extrakce do samostatných proměnných
+
+```{r}
+
+narust_3070 = data %>% filter(typ == "3070") %>% select(narust)
+narust_3070 = na.omit(narust_3070$narust)
+narust_6800 = data %>% filter(typ == "6800") %>% select(narust)
+narust_6800 = na.omit(narust_6800$narust)
+```
+
+### Empirické ověření normality & aproximace hustoty pravděpodobnosti
+
+```{r}
+#* vykreslí histogram s relativní četností hustoty pravděpodobnosti
+hist(narust_3070, freq=FALSE, breaks=20)
+
+#* přidá odhad hustoty pravděpodobnosti jako křivku
+lines(density(narust_6800), col="red", lwd=2)
+
+#* vygeneruje hodnoty pro osu x & y a přidání křivku normálního rozdělení
+xfit = seq(min(narust_6800), max(narust_6800), length=500)
+yfit = dnorm(xfit, mean=mean(narust_6800), sd=sd(narust_6800))
+lines(xfit, yfit, col="blue", lwd=2)
+
+#* vykreslí QQ-grafy
+qqnorm(narust_6800)
+qqline(narust_6800)
+
+#* sikmost, spicatost & pravidlo 3σ
+sikmost = moments::skewness(narust_6800)
+cat("sikmost: ", sikmost, "\n")
+spicatost = moments::kurtosis(narust_6800) - 3
+cat("spicatost: ", spicatost, "\n")
+mean = mean(narust_6800)
+sd = sd(narust_6800)
+interval_95 <- c(mean - 2 * sd, mean + 2 * sd)
+
+cat("95% interval: ", interval_95, "\n")
+```
+
+
+### Ověření normality (Shapirovým-Wilkovým testem)
+
+```{r}
+test = data %>% filter(typ == "ADSL") %>% select(r_po)
+shapiro.test(test$r_po)$p.value
+
+test = data %>% filter(typ == "SATELIT") %>% select(r_po)
+shapiro.test(test$r_po)$p.value
+
+rm(test)
+```
+
+### Bodový a intervalový odhad střední hodnoty (Studentův t-test)
+
+-   dolní/levostranný = greater
+-   horní/pravostranný = less
+-   oboustranný = two.sided
+
+```{r}
+#* intervalový odhad
+#* pokud je v zadání `95% odhad`, znamená to, že hladina významnosti je 5% (zbytek)
+#* do conf.level se píše těch 95%
+int1 = data %>% filter(typ == "A1") %>% select(automat)
+t.test(int1, alternative="greater", conf.level=0.95)
+
+int2 = data %>% filter(typ == "A2") %>% select(automat)
+t.test(int2, alternative="greater", conf.level=0.95)
+
+#* bodový odhad
+summary(int1)
+summary(int2)
+```
