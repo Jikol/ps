@@ -15,6 +15,7 @@ library(readxl)
 library(moments)
 library(dplyr)
 library(rstatix)
+library(ggplot2)
 
 options(OutDec = ".",
         digits = 7,
@@ -80,13 +81,13 @@ if (DATA_SOURCE_TYPE == "mexcel") {
 
 ```{r}
 #* odstranění řádků nebo sloupců
-data = data[,-c(1, 2, 3, 8, 9)]
+data = data[,-c(1)]
 
 #* vytvoření nové tebulky ve smyslu vynechání řádků za nějaké podmínky
 #data = data %>% filter(chem == "neprosel")
 
 #* úprava názvů sloupců
-colnames(data) = c("3070release", "3070patched", "6800release", "6800patched")
+colnames(data) = c("2080release", "2080patched", "3070release", "3070patched", "6800release", "6800patched", "7700release", "7700patched")
 ```
 
 ### Standardizace
@@ -101,14 +102,14 @@ if (FORMAT_NEEDED) {
   data = reshape(data=data, 
                  direction="long",
                  # ktere sloupce beru z puvodni struktury, každá položka listu = 1 kategorie
-                 varying=list(c("3070release", "6800release"),
-                              c("3070patched", "6800patched")),
+                 varying=list(c("2080release", "3070release", "6800release", "7700release"),
+                              c("2080patched", "3070patched", "6800patched", "7700patched")),
                  # jak se maji jmenovat nove sloupce s kvantitativnimi hodnotami
                  v.names=c("release", "patched"),
                  # jak se má jmenovat sloupec s kvalitativními hodnotami
                  timevar="typ",
                  # jak mají být kvalitativní hodnoty reprezentované
-                 times=c("3070", "6800"))
+                 times=c("2080", "3070", "6800", "7700"))
 }
 
 #* odstranění vzniklého "id" sloupce
@@ -185,45 +186,77 @@ hist(data$narust, breaks=30)
 ### Reprezentace kvantitativních hodnot do grafů a jejich export
 
 ```{r}
+col_1 = rgb( 33/255, 150/255, 243/255, alpha=0.3)
+col_2 = rgb(255/255,  87/255,  34/255, alpha=0.3)
+col_3 = rgb(156/255,  39/255, 176/255, alpha=0.3)
+col_4 = rgb( 76/255, 175/255,  80/255, alpha=0.3)
+```
+
+```{r}
 #* boxplot pro reporty
-#png("plots/boxplot_narust_op.png", width=800, height=600, res=120)
-col_1 = rgb(102/255, 179/255, 255/255, alpha=0.5)
-col_2 = rgb(153/255, 255/255, 153/255, alpha=0.5)
+#png("plots/boxplot_narust_op_all.png", width=800, height=900, res=120)
 boxplot(data$narust~data$typ,
-  col=c(col_1, col_2),
-  names=c("RTX 3070 Ti", "RX 6800 XT"),
-  horizontal=TRUE, 
-  main="Rozložení nárůstů FPS podle typu GPU",
+  col=c(col_1, col_2, col_3, col_4),
+  names=c("RTX 2080 Ti", "RTX 3070 Ti", "RX 6800 XT", "RX 7700 XT"),
+  horizontal=TRUE,
   ylab="Typ GPU",
   xlab="Nárůst FPS",
   border="gray30",
-  boxwex=0.6            
+  boxwex=0.75,
+  pch=19
 )
-grid(nx=NA, ny=NULL)
-#dev.off()
+grid()
+points(x=tapply(data$narust, data$typ, mean),
+  y=1:4,
+  pch=3,
+  col="red",
+  cex=1,
+  lwd=1
+)
+```
 
+```{r}
 #* histogram pro reporty
-#png("plots/histogram_narust_abs.png", width=800, height=600, res=120)
-hist(data$narust[data$typ=="3070"],
-  breaks=20,
-  col=col_1,
-  border="black",
-  main="Absolutní četnost nárůstů FPS podle typu GPU",
-  xlab="Nárůst FPS",
-  ylab="Četnost",
-  xlim=range(data$narust),
-  freq=TRUE
-)
-hist(data$narust[data$typ=="6800"],
-  breaks=20,
-  col=col_2,
-  border="black",
-  add=TRUE
-)
-legend("topright", legend=c("RTX 3070 Ti", "RX 6800 XT"), fill=c(col_1, col_2))
-grid(nx=NA, ny=NULL)
-#dev.off()
+#png("plots/histogram_narust_abs_all.png", width=800, height=600, res=120)
+xmin = floor(min(data$narust, na.rm=TRUE) * 10)/10
+xmax = ceiling(max(data$narust, na.rm=TRUE) * 10)/10
+ggplot(data, aes(x=narust, fill=typ)) +
+  geom_histogram(
+    breaks=seq(xmin, xmax, by=0.25),
+    color="black"
+  ) +
+  scale_fill_manual(
+    values = c("2080"=col_1,"3070"=col_2,"6800"=col_3,"7700"=col_4)
+  ) +
+  facet_wrap(~typ,
+    ncol=2,
+    scales="fixed",
+    labeller = as_labeller(c(
+      "2080" = "RTX 2080 Ti",
+      "3070" = "RTX 3070 Ti",
+      "6800" = "RX 6800 XT",
+      "7700" = "RX 7700 XT"
+    ))
+  ) +
+  scale_x_continuous(
+    breaks=seq(xmin, xmax, by=1),
+    limits=c(xmin, xmax)
+  ) +
+  scale_y_continuous(
+    breaks=scales::pretty_breaks(n=10)
+  ) +
+  labs(
+    x="Nárůst FPS",
+    y="Četnost",
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major=element_line(linetype="dotted"),
+    legend.position="none"
+  )
+```
 
+```{r}
 #* hustota pravděpodobnosti
 #png("plots/histogram_narust_rel_6800.png", width=800, height=600, res=120)
 hist(narust_6800,
@@ -245,9 +278,11 @@ legend("topright",
 )
 grid(nx=NA, ny=NULL)
 #dev.off()
+```
 
+```{r}
 #* QQ-Grafy
-png("plots/qq_norm_3070.png", width=800, height=600, res=120)
+#png("plots/qq_norm_3070.png", width=800, height=600, res=120)
 qqnorm(narust_3070,
   pch=21,
   col="black",
@@ -259,7 +294,57 @@ qqnorm(narust_3070,
 )
 qqline(narust_3070, col="#1D3557", lwd=1)
 grid(nx=NA, ny=NULL)
-dev.off()
+#dev.off()
+```
+
+```{r}
+#* QQ-Grafy (ggplot2)
+png("plots/qq_norm_all.png", width=800, height=600, res=120)
+mean_all = mean(data$narust, na.rm=TRUE)
+sd_all = sd(data$narust, na.rm=TRUE)
+xmin_data <- min(data$narust, na.rm = TRUE)
+xmax_data <- max(data$narust, na.rm = TRUE)
+theor_q <- qnorm(c(0.001, 0.999), mean = mean_all, sd = sd_all)
+xmin <- min(xmin_data, theor_q[1])
+xmax <- max(xmax_data, theor_q[2])
+ggplot(data, aes(sample = narust, color = typ)) +
+  stat_qq(
+    distribution=qnorm, 
+    dparams=list(mean=mean_all, sd=sd_all),
+    size=1.6
+  ) +
+  stat_qq_line(
+    distribution=qnorm,
+    dparams=list(mean=mean_all, sd=sd_all),
+    linetype="dashed", size=0.6
+  ) +
+  scale_color_manual(
+    values = c("2080"=col_1,"3070"=col_2,"6800"=col_3,"7700"=col_4)
+  ) +
+  facet_wrap(~typ,
+    ncol=2,
+    scales="fixed",
+    labeller=as_labeller(c(
+     "2080"="RTX 2080 Ti",
+     "3070"="RTX 3070 Ti",
+     "6800"="RX 6800 XT",
+     "7700"="RX 7700 XT"
+   ))
+  ) +
+  coord_fixed(ratio=1, xlim=c(xmin, xmax), ylim=c(xmin, xmax)) +
+  scale_x_continuous(breaks=seq(floor(xmin), ceiling(xmax), by=1)) +
+  scale_y_continuous(breaks=seq(floor(xmin), ceiling(xmax), by=1)) +
+  labs(
+    x="Teoretické kvantily",
+    y="Výběrové kvantily (Nárůst FPS)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major=element_line(linetype="dotted"),
+    legend.position="none",
+    axis.title.x=element_text(size=10),
+    axis.title.y=element_text(size=10)
+  )
 ```
 
 ### Tvorba dodatečných sloupců z informací k dispozici & extrakce do samostatných proměnných
